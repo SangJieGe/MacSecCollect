@@ -7,7 +7,7 @@
 #  注意: 本工具只负责复制/采集，不联网，不做判断，不全盘扫描
 # =============================================================================
 
-set -euo pipefail
+set -uo pipefail
 
 # ── 颜色定义 ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
@@ -64,13 +64,40 @@ echo -e "  主机名称: ${HOSTNAME}"
 echo -e "  输出目录: ${OUTPUT_DIR}"
 echo -e "  ${YELLOW}本工具不联网 · 不全盘扫描 · 只采集 · 不判断${RESET}\n"
 
-# 请求 sudo
-echo -e "${YELLOW}部分采集项需要管理员权限，请输入密码（某些项目无需密码也可运行）：${RESET}"
-sudo -v 2>/dev/null || warn "未获得 sudo 权限，部分系统级数据将跳过"
+# ── 通过 osascript 弹窗获取管理员密码 ──
+# Electron 环境没有交互终端，必须用 GUI 方式获取密码
+PASSWORD=""
+if [ -t 0 ]; then
+  # 有终端时直接 sudo -v
+  sudo -v 2>/dev/null || warn "未获得 sudo 权限，部分系统级数据将跳过"
+else
+  # Electron 调用时：osascript 弹窗获取密码
+  PASSWORD=$(osascript -e '
+    tell application "System Events"
+      display dialog "请输入管理员密码以采集系统安全数据" ¬
+        with hidden answer ¬
+        default answer "" ¬
+        buttons {"取消", "确定"} ¬
+        default button 2 ¬
+        with title "MacSecCollect"
+    end tell
+    text returned of result
+  ' 2>/dev/null) || true
+
+  if [ -n "$PASSWORD" ]; then
+    echo "$PASSWORD" | sudo -S -v 2>/dev/null || warn "密码验证失败，部分系统级数据将跳过"
+  else
+    warn "未输入密码，部分系统级数据将跳过"
+  fi
+fi
 
 # 保持 sudo 会话（后台刷新）
-( while true; do sudo -n true; sleep 50; done ) 2>/dev/null &
-SUDO_PID=$!
+if sudo -n true 2>/dev/null; then
+  ( while true; do sudo -n true; sleep 50; done ) 2>/dev/null &
+  SUDO_PID=$!
+else
+  SUDO_PID=""
+fi
 trap 'kill $SUDO_PID 2>/dev/null; echo -e "\n${RED}中断，已清理后台进程${RESET}"' EXIT INT TERM
 
 # ── 创建目录结构 ───────────────────────────────────────────────────────────────
@@ -291,7 +318,7 @@ ok "DNS 配置与 hosts 文件"
   sudo pfctl -s rules 2>/dev/null || echo "(需要 sudo 权限或 pf 未启用)"
   echo ""
   echo "=== 防火墙配置文件 ==="
-  sudo defaults read /Library/Preferences/com.apple.alf 2>/dev/null
+    sudo defaults read /Library/Preferences/com.apple.alf 2>/dev/null || true
 } > "${DIR}/firewall_status.txt" 2>/dev/null
 ok "防火墙状态"
 
@@ -332,7 +359,7 @@ ok "LaunchAgents"
   ls -la /Library/LaunchDaemons/ 2>/dev/null
   echo ""
   for f in /Library/LaunchDaemons/*.plist 2>/dev/null; do
-    [ -f "$f" ] && echo "--- $f ---" && sudo cat "$f" 2>/dev/null
+        [ -f "$f" ] && echo "--- $f ---" && sudo cat "$f" 2>/dev/null || true
   done
   echo ""
   echo "=== /System/Library/LaunchDaemons (系统自带，通常可信) ==="
@@ -427,7 +454,7 @@ ok "用户账号信息"
   echo ""
   echo "=== 系统级 authorized_keys ==="
   sudo find /etc /private/etc -name "authorized_keys" 2>/dev/null | while read f; do
-    echo "--- $f ---"; sudo cat "$f" 2>/dev/null
+        echo "--- $f ---"; sudo cat "$f" 2>/dev/null || true
   done
 } > "${DIR}/ssh_config.txt" 2>/dev/null
 ok "SSH 配置与授权密钥"
@@ -438,10 +465,10 @@ ok "SSH 配置与授权密钥"
   sudo cat /etc/sudoers 2>/dev/null || echo "(权限不足)"
   echo ""
   echo "=== /etc/sudoers.d/ ==="
-  sudo ls -la /etc/sudoers.d/ 2>/dev/null
+    sudo ls -la /etc/sudoers.d/ 2>/dev/null || true
   for f in $(sudo ls /etc/sudoers.d/ 2>/dev/null); do
     echo "--- /etc/sudoers.d/$f ---"
-    sudo cat "/etc/sudoers.d/$f" 2>/dev/null
+        sudo cat "/etc/sudoers.d/$f" 2>/dev/null || true
   done
 } > "${DIR}/sudoers.txt" 2>/dev/null
 ok "Sudo 配置"

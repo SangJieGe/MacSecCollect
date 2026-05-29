@@ -51,25 +51,7 @@ ipcMain.handle('start-scan', async (event) => {
     return { success: false, error: '脚本文件不存在: ' + scriptPath };
   }
 
-  // 先用 AppleScript 弹出管理员密码框，让 sudo 凭据缓存
-  // 这样脚本内部的 sudo -v 就不会再次弹窗
-  try {
-    const osascript = spawn('osascript', [
-      '-e',
-      'do shell script "sudo -v" with administrator privileges'
-    ]);
-
-    await new Promise((resolve, reject) => {
-      osascript.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error('sudo 授权失败'));
-      });
-      osascript.on('error', reject);
-    });
-    mainWindow.webContents.send('scan-progress', '🔑 管理员权限已获取');
-  } catch (err) {
-    mainWindow.webContents.send('scan-progress', '⚠️ sudo 授权被取消，部分系统级数据将跳过');
-  }
+  // sudo 授权由脚本内部通过 osascript 弹窗处理，main.js 不再重复弹窗
 
   return new Promise((resolve, reject) => {
     // 用 login shell 运行，确保 PATH 完整
