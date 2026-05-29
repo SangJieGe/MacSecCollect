@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>MacSecCollect</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 顶部标题栏拖拽区域 -->
+  <div class="titlebar"></div>
+
+  <!-- 主内容 -->
+  <div class="container">
+
+    <!-- 中心扫描区域 -->
+    <div class="scan-area" id="scanArea">
+      <div class="shield-icon" id="shieldIcon">🛡</div>
+      <button class="scan-btn" id="scanBtn">
+        <span class="btn-icon">▶</span>
+        <span class="btn-text">开始扫描</span>
+      </button>
+
+      <!-- 进度条（默认隐藏） -->
+      <div class="progress-container" id="progressContainer">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <span class="progress-text" id="progressText">0 / 20</span>
+      </div>
+    </div>
+
+    <!-- 日志区域 -->
+    <div class="log-area" id="logArea">
+      <div class="log-content" id="logContent"></div>
+    </div>
+
+    <!-- 完成后文件面板（默认隐藏） -->
+    <div class="result-panel" id="resultPanel">
+      <div class="result-info">
+        <span class="result-icon">📦</span>
+        <div class="result-details">
+          <span class="result-filename" id="resultFilename">-</span>
+          <span class="result-size" id="resultSize">-</span>
+        </div>
+      </div>
+      <div class="result-actions">
+        <button class="action-btn" id="finderBtn">
+          <span>📂</span> 在 Finder 中显示
+        </button>
+        <button class="action-btn" id="copyBtn">
+          <span>📋</span> 复制文件路径
+        </button>
+      </div>
+      <div class="result-hint">
+        💡 可直接将此压缩包发给 Claude 或 GPT 分析
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
