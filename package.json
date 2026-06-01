@@ -1,6 +1,6 @@
 {
   "name": "macseccollect",
-  "version": "2.1.0",
+  "version": "2.5.0",
   "description": "macOS Security Collector - 桌面安全扫描工具",
   "author": "Big_ G",
   "main": "main.js",
@@ -18,13 +18,23 @@
     "productName": "MacSecCollect",
     "mac": {
       "category": "public.app-category.utilities",
-      "target": ["dir", "dmg"]
+      "target": [
+        { "target": "dir", "arch": ["arm64", "x64"] },
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ]
     },
     "files": [
       "main.js",
       "preload.js",
       "renderer/**/*",
       "scripts/**/*"
-    ]
+    ],
+    "dmg": {
+      "title": "MacSecCollect 安装",
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    }
   }
 }
