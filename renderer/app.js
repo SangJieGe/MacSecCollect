@@ -16,7 +16,7 @@ let archivePath = '';
 let isScanning = false;
 
 // ─── 进度解析 ───
-// 脚本 step() 函数输出: [N/20] 【描述】...
+// 脚本 step() 函数输出: [N/11] 【描述】...
 function parseProgress(line) {
   const match = line.match(/\[(\d+)\/(\d+)\]/);
   if (match) {
