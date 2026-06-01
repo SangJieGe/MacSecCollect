@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  MacSecCollect v2.0 — 快速版（目标：2分钟内完成）
-#  精简策略：每项限时15秒，日志只取最近24h，输出截断到关键量
+#  MacSecCollect v2.1 — 断网采集阶段
+#  采集不需要网络的本地系统数据（断网状态下采集更安全）
+#  目标：2分钟内完成
+#  用法：mac_collect_offline.sh <输出目录>
 # =============================================================================
 
 set -uo pipefail
@@ -9,61 +11,27 @@ set -uo pipefail
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-HOSTNAME=$(hostname -s 2>/dev/null || echo "mac")
-OUTPUT_DIR="${HOME}/Desktop/MacSecCollect_${HOSTNAME}_${TIMESTAMP}"
-ARCHIVE_NAME="MacSecCollect_${HOSTNAME}_${TIMESTAMP}.zip"
+# ── 输出目录（由 Electron 传入）──
+OUTPUT_DIR="${1:?用法: $0 <输出目录>}"
+mkdir -p "${OUTPUT_DIR}"
 
-STEP=0; TOTAL=11
-
+# ── 进度（从 6 开始，接续联网阶段的 1-5）──
+STEP=5; TOTAL=15
 step() { STEP=$((STEP+1)); echo -e "\n${CYAN}[${STEP}/${TOTAL}]${RESET} ${BOLD}$1${RESET}"; }
 ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
 warn() { echo -e "  ${YELLOW}⚠${RESET}  $1"; }
 
-# 带超时的安全执行，超时自动截断
-run() {
-  local desc="$1"; local outfile="$2"; shift 2
-  timeout 15 bash -c "$*" > "${outfile}" 2>/dev/null && ok "${desc}" || warn "${desc} (超时或受限，已保留部分数据)"
-}
-
-# ── 创建目录 ──────────────────────────────────────────────────────────────────
-echo -e "\n${BOLD}${CYAN}╔══════════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${CYAN}║   MacSecCollect v2.0 — 快速安全取证采集工具      ║${RESET}"
-echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════╝${RESET}"
-echo -e "  采集时间: $(date)\n  ${YELLOW}⚠ 请保持网络连接状态下扫描，扫描完成后再断网隔离${RESET}\n"
-
+# ── sudo 保持 ──
 sudo -v 2>/dev/null || true
 ( while true; do sudo -n true; sleep 50; done ) 2>/dev/null &
 SUDO_PID=$!
 trap 'kill $SUDO_PID 2>/dev/null' EXIT INT TERM
 
-mkdir -p "${OUTPUT_DIR}"
-
-# ── AI 提示词 ─────────────────────────────────────────────────────────────────
-cat > "${OUTPUT_DIR}/AI_ANALYSIS_PROMPT.md" << 'PROMPT_EOF'
-# MacSecCollect v2.0 安全分析请求
-
-你是专业的 macOS 安全分析师。以下是 MacSecCollect 快速取证工具的采集数据。
-请分析是否存在：木马/后门/肉鸡控制/权限篡改/远程控制/信息窃取。
-
-输出格式（中文）：
-### 🔴 高危发现
-### 🟡 可疑项目  
-### 🟢 总体状态
-### 🔧 建议操作
-
-## 文件说明
-- 01_system.txt     系统版本、SIP状态、内核扩展
-- 02_processes.txt  进程列表（重点看非系统进程）
-- 03_network.txt    网络连接+监听端口（重点看 ESTABLISHED 出站）
-- 04_persistence.txt 所有自启动项（最重要！）
-- 05_auth.txt       用户/SSH/sudo配置
-- 06_remote.txt     远程访问服务状态
-- 07_logs.txt       最近24h关键日志
-- 08_files.txt      可疑路径+Shell配置
-- 09_security.txt   Gatekeeper/XProtect/IOC检查
-PROMPT_EOF
-ok "AI 提示词生成完成"
+echo -e "\n${BOLD}${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}${CYAN}║   MacSecCollect v2.1 — 断网采集阶段                  ║${RESET}"
+echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
+echo -e "  采集时间: $(date)"
+echo -e "  输出目录: ${OUTPUT_DIR}\n"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 step "【系统】基础信息 + SIP + 内核扩展"
@@ -78,7 +46,9 @@ step "【系统】基础信息 + SIP + 内核扩展"
   systemextensionsctl list 2>/dev/null | head -20
   echo -e "\n=== 最近安装的应用（7天内）==="
   find /Applications ~/Applications -name "*.app" -maxdepth 2 -mtime -7 2>/dev/null | head -15
-} > "${OUTPUT_DIR}/01_system.txt" 2>/dev/null
+  echo -e "\n=== 硬件概览 ==="
+  system_profiler SPHardwareDataType 2>/dev/null | head -10
+} > "${OUTPUT_DIR}/06_system.txt" 2>/dev/null
 ok "系统信息"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -92,28 +62,10 @@ step "【进程】运行中的进程（非系统进程优先）"
   ps aux 2>/dev/null | grep -v -E "com\.apple|/usr/bin|/usr/sbin|/bin/|/sbin/|/System/|/Library/Apple" | head -40
   echo -e "\n=== /tmp 或隐藏路径运行的进程（高危）==="
   ps aux 2>/dev/null | grep -E "/tmp/|/var/tmp/|\\.([^/]+)/" | grep -v grep | head -20
-} > "${OUTPUT_DIR}/02_processes.txt" 2>/dev/null
+  echo -e "\n=== 进程可执行文件路径 ==="
+  ps axo pid,comm,args 2>/dev/null | grep -v "^PID" | head -50
+} > "${OUTPUT_DIR}/07_processes.txt" 2>/dev/null
 ok "进程列表"
-
-# ═══════════════════════════════════════════════════════════════════════════════
-step "【网络】连接 + 端口（含进程名）"
-{
-  echo "=== 活跃网络连接（含进程名）==="
-  timeout 10 lsof -i -n -P 2>/dev/null | head -80
-  echo -e "\n=== 监听端口 ==="
-  netstat -an 2>/dev/null | grep LISTEN | head -30
-  echo -e "\n=== ESTABLISHED 出站连接（重点：看有无可疑IP）==="
-  netstat -an 2>/dev/null | grep ESTABLISHED | head -40
-  echo -e "\n=== /etc/hosts（检查是否被篡改）==="
-  cat /etc/hosts 2>/dev/null
-  echo -e "\n=== DNS 配置 ==="
-  scutil --dns 2>/dev/null | grep "nameserver" | head -10
-  echo -e "\n=== 系统代理设置 ==="
-  scutil --proxy 2>/dev/null | head -20
-  echo -e "\n=== 穿透工具进程检查（ngrok/frp/zerotier）==="
-  ps aux 2>/dev/null | grep -E "ngrok|frp|zerotier|tailscale|hamachi|playit" | grep -v grep || echo "未发现"
-} > "${OUTPUT_DIR}/03_network.txt" 2>/dev/null
-ok "网络连接"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 step "【持久化】所有自启动项（最重要）"
@@ -129,7 +81,10 @@ step "【持久化】所有自启动项（最重要）"
   ls -la /Library/LaunchAgents/ 2>/dev/null | grep -v "com.apple" || echo "(无非Apple项)"
   echo ""
   for f in /Library/LaunchAgents/*.plist; do
-    [ -f "$f" ] && echo "--- $f ---" && cat "$f" 2>/dev/null && echo ""
+    [ -f "$f" ] || continue
+    fname=$(basename "$f")
+    [[ "$fname" == com.apple.* ]] && continue
+    echo "--- $f ---" && cat "$f" 2>/dev/null && echo ""
   done
 
   echo -e "\n=== 系统 LaunchDaemons（非Apple项）==="
@@ -151,7 +106,7 @@ step "【持久化】所有自启动项（最重要）"
 
   echo -e "\n=== Shell 配置中的异常（检查 PATH 劫持/alias 后门）==="
   grep -E "curl|wget|bash|sh |python|nc |ncat|exec" ~/.zshrc ~/.bashrc ~/.bash_profile ~/.zprofile ~/.profile 2>/dev/null | head -20 || echo "(无可疑内容)"
-} > "${OUTPUT_DIR}/04_persistence.txt" 2>/dev/null
+} > "${OUTPUT_DIR}/08_persistence.txt" 2>/dev/null
 ok "持久化/自启动项"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -177,7 +132,7 @@ step "【用户认证】账号 + SSH 授权密钥 + sudo"
 
   echo -e "\n=== 最近登录历史 ==="
   last 2>/dev/null | head -20
-} > "${OUTPUT_DIR}/05_auth.txt" 2>/dev/null
+} > "${OUTPUT_DIR}/09_auth.txt" 2>/dev/null
 ok "用户认证"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -192,12 +147,9 @@ step "【远程访问】SSH/VNC/ARD/屏幕共享"
   echo -e "\n=== ARD 远程管理状态 ==="
   sudo launchctl list com.apple.RemoteDesktop.agent 2>/dev/null || echo "未运行"
 
-  echo -e "\n=== 监听的远程访问端口（22/5900/3283）==="
+  echo -e "\n=== 远程访问端口监听状态（22/5900/3283）==="
   netstat -an 2>/dev/null | grep -E "\.22 |\.5900 |\.3283 |\.5988 " | grep LISTEN || echo "相关端口无监听"
-
-  echo -e "\n=== 穿透工具自启动项 ==="
-  ls ~/Library/LaunchAgents/ /Library/LaunchAgents/ /Library/LaunchDaemons/ 2>/dev/null | grep -iE "ngrok|frp|zerotier|tailscale|hamachi" || echo "未发现"
-} > "${OUTPUT_DIR}/06_remote.txt" 2>/dev/null
+} > "${OUTPUT_DIR}/10_remote.txt" 2>/dev/null
 ok "远程访问服务"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,7 +175,7 @@ step "【日志】最近24小时关键事件"
 
   echo -e "\n=== 应用崩溃报告（最近7天）==="
   ls -lt ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -15
-} > "${OUTPUT_DIR}/07_logs.txt" 2>/dev/null
+} > "${OUTPUT_DIR}/11_logs.txt" 2>/dev/null
 ok "系统日志"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -252,7 +204,7 @@ step "【文件】可疑路径 + Shell配置 + 临时目录"
 
   echo -e "\n=== ~/Downloads 最近30天文件 ==="
   find ~/Downloads -maxdepth 2 -type f -mtime -30 2>/dev/null | head -30
-} > "${OUTPUT_DIR}/08_files.txt" 2>/dev/null
+} > "${OUTPUT_DIR}/12_files.txt" 2>/dev/null
 ok "文件系统检查"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -260,9 +212,6 @@ step "【安全机制】Gatekeeper + XProtect + IOC"
 {
   echo "=== Gatekeeper 状态 ==="
   spctl --status 2>/dev/null
-
-  echo -e "\n=== SIP 详细状态 ==="
-  csrutil status 2>/dev/null
 
   echo -e "\n=== XProtect 版本 ==="
   defaults read /Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Resources/XProtect.meta.plist 2>/dev/null | head -10 || echo "(无法读取)"
@@ -294,19 +243,23 @@ step "【安全机制】Gatekeeper + XProtect + IOC"
 
   echo -e "\n=== 浏览器扩展列表（Chrome）==="
   ls ~/Library/Application\ Support/Google/Chrome/Default/Extensions/ 2>/dev/null | head -20 || echo "(Chrome未安装)"
-} > "${OUTPUT_DIR}/09_security.txt" 2>/dev/null
+} > "${OUTPUT_DIR}/13_security.txt" 2>/dev/null
 ok "安全机制检查"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 step "【摘要】生成快速摘要"
 {
-  echo "# MacSecCollect v2.0 采集摘要"
+  HOSTNAME=$(hostname -s 2>/dev/null || echo "mac")
+  echo "# MacSecCollect v2.1 采集摘要"
   echo "采集时间: $(date)"
   echo "主机名: ${HOSTNAME}"
   echo "macOS: $(sw_vers -productVersion 2>/dev/null)"
   echo "当前用户: $(whoami)"
   echo ""
   echo "## 快速关注点"
+  echo ""
+  echo "### 联网阶段数据（01-05）"
+  echo "已由联网采集阶段完成"
   echo ""
   echo "### 监听端口数量"
   netstat -an 2>/dev/null | grep -c LISTEN || echo "0"
@@ -326,18 +279,10 @@ step "【摘要】生成快速摘要"
 } > "${OUTPUT_DIR}/00_SUMMARY.md" 2>/dev/null
 ok "摘要生成完成"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-step "【打包】压缩所有数据"
+# ── 完成 ──
 kill $SUDO_PID 2>/dev/null || true
 trap - EXIT
 
-cd "${HOME}/Desktop"
-zip -r "${ARCHIVE_NAME}" "$(basename ${OUTPUT_DIR})" -q 2>/dev/null && \
-  rm -rf "${OUTPUT_DIR}" && ok "打包完成" || warn "打包失败，请手动压缩 ${OUTPUT_DIR}"
-
-echo -e "\n${GREEN}${BOLD}✅ 完成！${RESET}"
-echo -e "  压缩包: ${HOME}/Desktop/${ARCHIVE_NAME}"
-echo -e "  大小: $(du -h "${HOME}/Desktop/${ARCHIVE_NAME}" 2>/dev/null | cut -f1)"
-echo -e "\n  ${YELLOW}下一步: 解压后将文件发给 Claude/GPT 分析${RESET}\n"
-
-open -R "${HOME}/Desktop/${ARCHIVE_NAME}" 2>/dev/null || true
+echo -e "\n${GREEN}${BOLD}✅ 断网采集完成！${RESET}"
+echo -e "  共采集 15 项数据"
+echo -e "  输出目录: ${OUTPUT_DIR}"

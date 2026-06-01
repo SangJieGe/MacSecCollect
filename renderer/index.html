@@ -17,17 +17,30 @@
     <!-- 中心扫描区域 -->
     <div class="scan-area" id="scanArea">
       <div class="shield-icon" id="shieldIcon">🛡</div>
-      <button class="scan-btn" id="scanBtn">
-        <span class="btn-icon">▶</span>
-        <span class="btn-text">开始扫描</span>
-      </button>
 
-      <!-- 进度条（默认隐藏） -->
+      <!-- 步骤提示 -->
+      <div class="step-hint step-hint-warn" id="stepHint">
+        ⚠️ 第一步：请先点「联网采集」（保持联网），采集完成后立即断网
+      </div>
+
+      <!-- 双按钮 -->
+      <div class="btn-group">
+        <button class="scan-btn scan-btn-online" id="onlineBtn">
+          <span class="btn-icon">📡</span>
+          <span class="btn-text">联网采集</span>
+        </button>
+        <button class="scan-btn scan-btn-offline" id="offlineBtn" disabled>
+          <span class="btn-icon">🔒</span>
+          <span class="btn-text">断网采集</span>
+        </button>
+      </div>
+
+      <!-- 进度条 -->
       <div class="progress-container" id="progressContainer">
         <div class="progress-bar">
           <div class="progress-fill" id="progressFill"></div>
         </div>
-        <span class="progress-text" id="progressText">0 / 11</span>
+        <span class="progress-text" id="progressText">0 / 15</span>
       </div>
     </div>
 

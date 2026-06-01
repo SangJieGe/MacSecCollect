@@ -1,7 +1,9 @@
 // ─── DOM 元素 ───
-const scanBtn = document.getElementById('scanBtn');
+const onlineBtn = document.getElementById('onlineBtn');
+const offlineBtn = document.getElementById('offlineBtn');
 const scanArea = document.getElementById('scanArea');
 const shieldIcon = document.getElementById('shieldIcon');
+const stepHint = document.getElementById('stepHint');
 const progressContainer = document.getElementById('progressContainer');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
@@ -14,9 +16,10 @@ const copyBtn = document.getElementById('copyBtn');
 
 let archivePath = '';
 let isScanning = false;
+let onlineDone = false;
 
 // ─── 进度解析 ───
-// 脚本 step() 函数输出: [N/11] 【描述】...
+// 脚本 step() 输出: [N/15] 【描述】...
 function parseProgress(line) {
   const match = line.match(/\[(\d+)\/(\d+)\]/);
   if (match) {
@@ -59,25 +62,15 @@ function showResultPanel(path, size) {
 
 // ─── 判断日志类型 ───
 function classifyLine(text) {
-  // ✓ 开头 = success
   if (text.startsWith('✓')) return 'success';
-  // ⚠ 开头 = warning/info
   if (text.startsWith('⚠')) return 'info';
-  // ✗ 开头 = error
   if (text.startsWith('✗')) return 'error';
-  // ✅ 或 完成 = success
-  if (text.includes('✅') || text.includes('采集完成')) return 'success';
-  // [STEP/TOTAL] = pending (正在采集)
+  if (text.includes('✅') || text.includes('完成')) return 'success';
   if (/\[\d+\/\d+\]/.test(text)) return 'pending';
-  // ╔ ║ ╚ 装饰线 = info
   if (/^[╔║╚═╗╝]/.test(text)) return 'info';
-  // 提示/注意 = info
   if (text.startsWith('注意') || text.startsWith('提示') || text.startsWith('下一步')) return 'info';
-  // 错误/失败 = error
   if (text.includes('失败') || text.includes('错误') || text.includes('中断')) return 'error';
-  // 权限相关 = info
-  if (text.includes('权限') || text.includes('sudo') || text.includes('🔑')) return 'info';
-  // 其他
+  if (text.includes('权限') || text.includes('sudo')) return 'info';
   return 'info';
 }
 
@@ -94,44 +87,87 @@ window.electronAPI.onProgress((message) => {
   }
 });
 
-// ─── 开始扫描 ───
-scanBtn.addEventListener('click', async () => {
+// ─── 联网采集 ───
+onlineBtn.addEventListener('click', async () => {
   if (isScanning) return;
   isScanning = true;
 
-  scanBtn.disabled = true;
-  scanBtn.querySelector('.btn-text').textContent = '扫描中...';
+  onlineBtn.disabled = true;
+  onlineBtn.querySelector('.btn-text').textContent = '采集中...';
   shieldIcon.classList.add('scanning');
   progressContainer.classList.add('visible');
   resultPanel.classList.remove('visible');
   logContent.innerHTML = '';
 
+  addLogLine('📡 开始联网采集...', 'pending');
+
   try {
-    const result = await window.electronAPI.startScan();
+    const result = await window.electronAPI.startOnlineScan();
 
     if (result.success) {
-      addLogLine('✅ 采集完成！', 'success');
+      addLogLine('✅ 联网采集完成！', 'success');
+      onlineDone = true;
 
-      if (result.archivePath) {
-        showResultPanel(result.archivePath, result.fileSize);
-      } else {
-        addLogLine('⚠️ 未能自动检测输出文件，请检查桌面 MacSecCollect_*.zip', 'info');
-        scanBtn.disabled = false;
-        scanBtn.querySelector('.btn-text').textContent = '重新扫描';
-        shieldIcon.classList.remove('scanning');
-        shieldIcon.classList.add('done');
-      }
+      // 更新按钮和提示
+      onlineBtn.querySelector('.btn-text').textContent = '已完成 ✓';
+      offlineBtn.disabled = false;
+      stepHint.className = 'step-hint step-hint-done';
+      stepHint.textContent = '✅ 第二步：请断开网络，然后点击「断网采集」按钮';
+
+      // 弹出断网提示
+      await window.electronAPI.showDisconnectAlert();
     } else {
-      addLogLine(`❌ 扫描失败: ${result.error}`, 'error');
-      scanBtn.disabled = false;
-      scanBtn.querySelector('.btn-text').textContent = '重新扫描';
+      addLogLine(`❌ 联网采集失败: ${result.error}`, 'error');
+      onlineBtn.disabled = false;
+      onlineBtn.querySelector('.btn-text').textContent = '联网采集';
       shieldIcon.classList.remove('scanning');
     }
   } catch (err) {
     addLogLine(`❌ 异常: ${err.message}`, 'error');
-    scanBtn.disabled = false;
-    scanBtn.querySelector('.btn-text').textContent = '重新扫描';
+    onlineBtn.disabled = false;
+    onlineBtn.querySelector('.btn-text').textContent = '联网采集';
     shieldIcon.classList.remove('scanning');
+  }
+
+  isScanning = false;
+});
+
+// ─── 断网采集 ───
+offlineBtn.addEventListener('click', async () => {
+  if (isScanning || !onlineDone) return;
+  isScanning = true;
+
+  offlineBtn.disabled = true;
+  offlineBtn.querySelector('.btn-text').textContent = '采集中...';
+  addLogLine('🔒 开始断网采集...', 'pending');
+
+  try {
+    const result = await window.electronAPI.startOfflineScan();
+
+    if (result.success) {
+      addLogLine('✅ 断网采集完成！正在打包...', 'success');
+
+      // 打包
+      const archiveResult = await window.electronAPI.createArchive();
+
+      if (archiveResult.success) {
+        addLogLine('✅ 打包完成！', 'success');
+        showResultPanel(archiveResult.archivePath, archiveResult.fileSize);
+      } else {
+        addLogLine(`⚠️ 打包失败: ${archiveResult.error}，数据已保存在临时目录`, 'info');
+        offlineBtn.querySelector('.btn-text').textContent = '已完成 ✓';
+        shieldIcon.classList.remove('scanning');
+        shieldIcon.classList.add('done');
+      }
+    } else {
+      addLogLine(`❌ 断网采集失败: ${result.error}`, 'error');
+      offlineBtn.disabled = false;
+      offlineBtn.querySelector('.btn-text').textContent = '断网采集';
+    }
+  } catch (err) {
+    addLogLine(`❌ 异常: ${err.message}`, 'error');
+    offlineBtn.disabled = false;
+    offlineBtn.querySelector('.btn-text').textContent = '断网采集';
   }
 
   isScanning = false;

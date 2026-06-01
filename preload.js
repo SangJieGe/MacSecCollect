@@ -1,8 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // 启动扫描（invoke = 双向通信，等待结果）
-  startScan: () => ipcRenderer.invoke('start-scan'),
+  // 联网采集
+  startOnlineScan: () => ipcRenderer.invoke('start-online-scan'),
+
+  // 断网采集
+  startOfflineScan: () => ipcRenderer.invoke('start-offline-scan'),
+
+  // 打包压缩
+  createArchive: () => ipcRenderer.invoke('create-archive'),
+
+  // 显示断网提示
+  showDisconnectAlert: () => ipcRenderer.invoke('show-disconnect-alert'),
 
   // 监听实时进度（单向，主进程推送）
   onProgress: (callback) => {

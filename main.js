@@ -1,14 +1,15 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Notification } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 
 let mainWindow;
+let sharedOutputDir = ''; // 联网/断网阶段共享的输出目录
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 680,
-    height: 480,
+    width: 720,
+    height: 560,
     resizable: false,
     title: 'MacSecCollect',
     titleBarStyle: 'hiddenInset',
@@ -43,25 +44,23 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// ─── IPC: 开始扫描 ───
-ipcMain.handle('start-scan', async (event) => {
-  const scriptPath = path.join(__dirname, 'scripts', 'mac_security_collector.sh');
+// ─── 通用脚本执行器 ───
+function runScript(scriptName, extraArgs = []) {
+  const scriptPath = path.join(__dirname, 'scripts', scriptName);
 
   if (!fs.existsSync(scriptPath)) {
-    return { success: false, error: '脚本文件不存在: ' + scriptPath };
+    return Promise.resolve({ success: false, error: '脚本文件不存在: ' + scriptPath });
   }
 
-  // sudo 授权由脚本内部通过 osascript 弹窗处理，main.js 不再重复弹窗
-
-  return new Promise((resolve, reject) => {
-    // 用 login shell 运行，确保 PATH 完整
-    const child = spawn('bash', [scriptPath], {
+  return new Promise((resolve) => {
+    const args = [scriptPath, ...extraArgs];
+    const child = spawn('bash', args, {
       cwd: path.join(__dirname, 'scripts'),
       env: { ...process.env, FORCE_COLOR: '0', TERM: 'dumb' }
     });
 
     let stdoutBuffer = '';
-    let allOutput = ''; // 累积所有输出，用于最后提取路径
+    let allOutput = '';
 
     child.stdout.on('data', (data) => {
       const raw = data.toString();
@@ -69,13 +68,16 @@ ipcMain.handle('start-scan', async (event) => {
       allOutput += clean;
       stdoutBuffer += clean;
 
-      // 按行分割，保留最后一个不完整的行
       const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop(); // 保留未完成的行
+      stdoutBuffer = lines.pop();
 
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed) {
+          // 检查是否包含 OUTPUT_DIR 标记
+          if (trimmed.startsWith('OUTPUT_DIR:')) {
+            sharedOutputDir = trimmed.replace('OUTPUT_DIR:', '');
+          }
           mainWindow.webContents.send('scan-progress', trimmed);
         }
       }
@@ -87,76 +89,20 @@ ipcMain.handle('start-scan', async (event) => {
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed) {
-          // 脚本的 ok/warn/err 输出到 stderr（通过 echo -e）
-          // 但也有些真正的错误，都传给前端
           mainWindow.webContents.send('scan-progress', trimmed);
         }
       }
     });
 
     child.on('close', (code) => {
-      // 处理缓冲区中剩余内容
       if (stdoutBuffer.trim()) {
         mainWindow.webContents.send('scan-progress', stdoutBuffer.trim());
       }
 
       if (code === 0) {
-        // 从全部输出中提取压缩包路径
-        // 脚本最后输出: 压缩包位置: ~/Desktop/xxx.zip
-        // 也可能直接输出路径行
-        let archivePath = '';
-
-        // 方式1: 匹配 "压缩包位置:" 后的路径
-        const posMatch = allOutput.match(/压缩包位置:\s*(\S+\.zip)/);
-        if (posMatch) {
-          archivePath = posMatch[1].replace('~', process.env.HOME || '/root');
-        }
-
-        // 方式2: 匹配任意 .zip 路径
-        if (!archivePath) {
-          const zipMatch = allOutput.match(/(\/[^\s]+\.zip)/);
-          if (zipMatch) archivePath = zipMatch[1];
-        }
-
-        // 方式3: 默认路径 ~/Desktop/
-        if (!archivePath) {
-          // 脚本格式: MacSecCollect_HOSTNAME_TIMESTAMP.zip
-          const desktopPath = path.join(
-            process.env.HOME || '/root',
-            'Desktop'
-          );
-          // 找最新的 zip 文件
-          try {
-            const files = fs.readdirSync(desktopPath)
-              .filter(f => f.startsWith('MacSecCollect_') && f.endsWith('.zip'))
-              .map(f => ({
-                name: f,
-                time: fs.statSync(path.join(desktopPath, f)).mtimeMs
-              }))
-              .sort((a, b) => b.time - a.time);
-            if (files.length > 0) {
-              archivePath = path.join(desktopPath, files[0].name);
-            }
-          } catch (e) {
-            // Desktop 目录可能不存在（非 macOS 环境）
-          }
-        }
-
-        let fileSize = '';
-        if (archivePath && fs.existsSync(archivePath)) {
-          fileSize = formatBytes(fs.statSync(archivePath).size);
-        }
-
-        resolve({
-          success: true,
-          archivePath: archivePath,
-          fileSize: fileSize
-        });
+        resolve({ success: true, outputDir: sharedOutputDir, allOutput });
       } else {
-        resolve({
-          success: false,
-          error: `脚本退出码: ${code}`
-        });
+        resolve({ success: false, error: `脚本退出码: ${code}` });
       }
     });
 
@@ -164,6 +110,107 @@ ipcMain.handle('start-scan', async (event) => {
       resolve({ success: false, error: err.message });
     });
   });
+}
+
+// ─── 打包压缩 ───
+function createArchive(outputDir) {
+  return new Promise((resolve) => {
+    if (!outputDir || !fs.existsSync(outputDir)) {
+      resolve({ success: false, error: '输出目录不存在' });
+      return;
+    }
+
+    const archiveName = path.basename(outputDir) + '.zip';
+    const desktopPath = path.join(process.env.HOME || '/root', 'Desktop');
+    const archivePath = path.join(desktopPath, archiveName);
+
+    const child = spawn('zip', ['-r', archivePath, path.basename(outputDir)], {
+      cwd: desktopPath,
+      env: { ...process.env }
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        // 删除临时目录
+        try { fs.rmSync(outputDir, { recursive: true }); } catch (e) {}
+
+        let fileSize = '';
+        if (fs.existsSync(archivePath)) {
+          fileSize = formatBytes(fs.statSync(archivePath).size);
+        }
+        resolve({ success: true, archivePath, fileSize });
+      } else {
+        resolve({ success: false, error: stderr || '压缩失败' });
+      }
+    });
+
+    child.on('error', (err) => {
+      resolve({ success: false, error: err.message });
+    });
+  });
+}
+
+// ─── IPC: 联网采集 ───
+ipcMain.handle('start-online-scan', async (event) => {
+  // 生成共享输出目录
+  const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
+  const hostname = require('os').hostname().split('.')[0] || 'mac';
+  sharedOutputDir = path.join(
+    process.env.HOME || '/root',
+    'Desktop',
+    `MacSecCollect_${hostname}_${timestamp}`
+  );
+
+  const result = await runScript('mac_collect_online.sh', [sharedOutputDir]);
+  return { ...result, outputDir: sharedOutputDir };
+});
+
+// ─── IPC: 断网采集 ───
+ipcMain.handle('start-offline-scan', async (event) => {
+  if (!sharedOutputDir) {
+    return { success: false, error: '请先完成联网采集' };
+  }
+  const result = await runScript('mac_collect_offline.sh', [sharedOutputDir]);
+  return result;
+});
+
+// ─── IPC: 打包 ───
+ipcMain.handle('create-archive', async (event) => {
+  if (!sharedOutputDir) {
+    return { success: false, error: '没有可打包的数据' };
+  }
+  const result = await createArchive(sharedOutputDir);
+  if (result.success) {
+    sharedOutputDir = ''; // 清理
+  }
+  return result;
+});
+
+// ─── IPC: 显示断网提示 ───
+ipcMain.handle('show-disconnect-alert', async (event) => {
+  // 用 osascript 弹系统通知
+  const { execSync } = require('child_process');
+  try {
+    execSync(`osascript -e 'display notification "请立即断开网络连接，然后点击「断网采集」按钮" with title "MacSecCollect" sound name "Submarine"'`, { timeout: 5000 });
+  } catch (e) {}
+
+  // 同时弹对话框
+  try {
+    const result = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      title: 'MacSecCollect',
+      message: '联网采集完成！',
+      detail: '请立即断开网络连接（WiFi/有线），然后点击「断网采集」按钮继续。',
+      buttons: ['已断网，继续', '取消'],
+      defaultId: 0
+    });
+    return result === 0;
+  } catch (e) {
+    return true;
+  }
 });
 
 // ─── IPC: 在 Finder 中显示 ───
