@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  MacSecCollect v2.1 — 断网采集阶段
+#  MacSecCollect v2.2 — 断网采集阶段
 #  采集不需要网络的本地系统数据（断网状态下采集更安全）
-#  目标：2分钟内完成
+#  目标：1-3分钟完成
 #  用法：mac_collect_offline.sh <输出目录>
 # =============================================================================
 
@@ -15,7 +15,7 @@ CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 OUTPUT_DIR="${1:?用法: $0 <输出目录>}"
 mkdir -p "${OUTPUT_DIR}"
 
-# ── 进度（从 6 开始，接续联网阶段的 1-5）──
+# ── 进度（从 6 开始，接续联网阶段的 1-5，到 15 结束）──
 STEP=5; TOTAL=15
 step() { STEP=$((STEP+1)); echo -e "\n${CYAN}[${STEP}/${TOTAL}]${RESET} ${BOLD}$1${RESET}"; }
 ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
@@ -28,7 +28,7 @@ SUDO_PID=$!
 trap 'kill $SUDO_PID 2>/dev/null' EXIT INT TERM
 
 echo -e "\n${BOLD}${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${CYAN}║   MacSecCollect v2.1 — 断网采集阶段                  ║${RESET}"
+echo -e "${BOLD}${CYAN}║   MacSecCollect v2.2 — 断网采集阶段                  ║${RESET}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
 echo -e "  采集时间: $(date)"
 echo -e "  输出目录: ${OUTPUT_DIR}\n"
@@ -52,7 +52,7 @@ step "【系统】基础信息 + SIP + 内核扩展"
 ok "系统信息"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-step "【进程】运行中的进程（非系统进程优先）"
+step "【进程】运行中的进程 + 开放文件句柄"
 {
   echo "=== 所有进程（按CPU排序 Top 80）==="
   ps aux -r 2>/dev/null | head -81
@@ -64,8 +64,10 @@ step "【进程】运行中的进程（非系统进程优先）"
   ps aux 2>/dev/null | grep -E "/tmp/|/var/tmp/|\\.([^/]+)/" | grep -v grep | head -20
   echo -e "\n=== 进程可执行文件路径 ==="
   ps axo pid,comm,args 2>/dev/null | grep -v "^PID" | head -50
+  echo -e "\n=== 开放文件句柄（非系统文件，timeout 60s）==="
+  timeout 60 lsof 2>/dev/null | grep -v -E "com\.apple|/System/|/usr/lib" | head -500
 } > "${OUTPUT_DIR}/07_processes.txt" 2>/dev/null
-ok "进程列表"
+ok "进程列表 + 文件句柄"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 step "【持久化】所有自启动项（最重要）"
@@ -110,7 +112,7 @@ step "【持久化】所有自启动项（最重要）"
 ok "持久化/自启动项"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-step "【用户认证】账号 + SSH 授权密钥 + sudo"
+step "【用户认证】账号 + SSH + sudo + 登录历史"
 {
   echo "=== 本地用户列表 ==="
   dscl . list /Users 2>/dev/null | grep -v "^_"
@@ -130,10 +132,18 @@ step "【用户认证】账号 + SSH 授权密钥 + sudo"
   echo -e "\n=== sudoers 非注释行 ==="
   sudo grep -v "^#\|^$" /etc/sudoers 2>/dev/null | head -20
 
-  echo -e "\n=== 最近登录历史 ==="
-  last 2>/dev/null | head -20
+  echo -e "\n=== 最近登录历史（50条）==="
+  last 2>/dev/null | head -50
+
+  echo -e "\n=== /var/log/auth.log（最后500行）==="
+  sudo tail -500 /var/log/auth.log 2>/dev/null || echo "(不存在或权限不足)"
+
+  echo -e "\n=== sudo 使用记录（最近72h）==="
+  timeout 20 log show --last 72h \
+    --predicate 'eventMessage contains "sudo"' \
+    2>/dev/null | tail -100 || echo "(log 命令超时)"
 } > "${OUTPUT_DIR}/09_auth.txt" 2>/dev/null
-ok "用户认证"
+ok "用户认证 + 登录历史"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 step "【远程访问】SSH/VNC/ARD/屏幕共享"
@@ -153,30 +163,27 @@ step "【远程访问】SSH/VNC/ARD/屏幕共享"
 ok "远程访问服务"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-step "【日志】最近24小时关键事件"
+step "【日志】最近72小时关键事件"
 {
-  echo "=== 认证事件（最近24h）==="
-  timeout 20 log show --last 24h \
+  echo "=== 认证事件（最近72h）==="
+  timeout 45 log show --last 72h \
     --predicate 'eventMessage contains "authentication" or eventMessage contains "sudo" or eventMessage contains "ssh"' \
-    2>/dev/null | tail -60 || echo "(log 命令超时)"
+    2>/dev/null | tail -200 || echo "(log 命令超时)"
 
-  echo -e "\n=== 安全框架事件（Gatekeeper/XProtect）==="
-  timeout 15 log show --last 24h \
+  echo -e "\n=== 安全框架事件（Gatekeeper/XProtect，最近72h）==="
+  timeout 30 log show --last 72h \
     --predicate 'subsystem contains "gatekeeper" or subsystem contains "xprotect"' \
-    2>/dev/null | tail -30 || echo "(log 命令超时)"
+    2>/dev/null | tail -100 || echo "(log 命令超时)"
 
-  echo -e "\n=== launchd 启动事件（最近24h）==="
-  timeout 15 log show --last 24h \
+  echo -e "\n=== launchd 启动事件（最近72h）==="
+  timeout 45 log show --last 72h \
     --predicate 'subsystem == "com.apple.launchd"' \
-    2>/dev/null | tail -50 || echo "(log 命令超时)"
+    2>/dev/null | tail -300 || echo "(log 命令超时)"
 
   echo -e "\n=== 最近安装记录 ==="
   tail -50 /var/log/install.log 2>/dev/null || echo "(不存在)"
-
-  echo -e "\n=== 应用崩溃报告（最近7天）==="
-  ls -lt ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -15
 } > "${OUTPUT_DIR}/11_logs.txt" 2>/dev/null
-ok "系统日志"
+ok "系统日志（72h）"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 step "【文件】可疑路径 + Shell配置 + 临时目录"
@@ -187,12 +194,12 @@ step "【文件】可疑路径 + Shell配置 + 临时目录"
   echo -e "\n=== /tmp/ 目录内容 ==="
   ls -la /tmp/ 2>/dev/null | head -30
 
-  echo -e "\n=== 最近7天修改的自启动相关文件 ==="
+  echo -e "\n=== 最近14天修改的自启动相关文件 ==="
   find ~/Library/LaunchAgents /Library/LaunchAgents /Library/LaunchDaemons \
-    -type f -mtime -7 2>/dev/null | head -20 || echo "(无最近修改)"
+    -type f -mtime -14 2>/dev/null | head -30 || echo "(无最近修改)"
 
-  echo -e "\n=== 最近7天修改的 /etc/ 文件 ==="
-  find /private/etc -type f -mtime -7 2>/dev/null | head -15
+  echo -e "\n=== 最近14天修改的 /etc/ 文件 ==="
+  find /private/etc -type f -mtime -14 2>/dev/null | head -25
 
   echo -e "\n=== Shell 配置文件完整内容 ==="
   for f in ~/.zshrc ~/.bashrc ~/.bash_profile ~/.zprofile ~/.profile; do
@@ -202,8 +209,14 @@ step "【文件】可疑路径 + Shell配置 + 临时目录"
   echo -e "\n=== PATH 环境变量 ==="
   echo $PATH
 
-  echo -e "\n=== ~/Downloads 最近30天文件 ==="
-  find ~/Downloads -maxdepth 2 -type f -mtime -30 2>/dev/null | head -30
+  echo -e "\n=== ~/Downloads 最近60天文件 ==="
+  find ~/Downloads -maxdepth 2 -type f -mtime -60 2>/dev/null | head -50
+
+  echo -e "\n=== /usr/local/bin/ 完整内容（检查异常二进制）==="
+  ls -la /usr/local/bin/ 2>/dev/null | head -50 || echo "(目录不存在)"
+
+  echo -e "\n=== ~/Library/Application Support/ 目录列表（检查异常目录）==="
+  ls -la ~/Library/Application\ Support/ 2>/dev/null | head -40 || echo "(目录不存在)"
 } > "${OUTPUT_DIR}/12_files.txt" 2>/dev/null
 ok "文件系统检查"
 
@@ -247,10 +260,33 @@ step "【安全机制】Gatekeeper + XProtect + IOC"
 ok "安全机制检查"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+step "【崩溃报告】最近15天 DiagnosticReports"
+{
+  echo "=== 最近15天崩溃报告列表 ==="
+  ls -lt ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -20 || echo "(无崩溃报告)"
+
+  echo -e "\n=== 最近3个崩溃报告内容摘要（前50行）==="
+  CRASH_DIR="$HOME/Library/Logs/DiagnosticReports"
+  if [ -d "$CRASH_DIR" ]; then
+    count=0
+    for f in $(ls -t "$CRASH_DIR" 2>/dev/null | head -3); do
+      if [ $count -lt 3 ]; then
+        echo -e "\n--- ${CRASH_DIR}/${f} ---"
+        head -50 "${CRASH_DIR}/${f}" 2>/dev/null || echo "(无法读取)"
+        count=$((count + 1))
+      fi
+    done
+  else
+    echo "(DiagnosticReports 目录不存在)"
+  fi
+} > "${OUTPUT_DIR}/14_crashes.txt" 2>/dev/null
+ok "崩溃报告"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 step "【摘要】生成快速摘要"
 {
   HOSTNAME=$(hostname -s 2>/dev/null || echo "mac")
-  echo "# MacSecCollect v2.1 采集摘要"
+  echo "# MacSecCollect v2.2 采集摘要"
   echo "采集时间: $(date)"
   echo "主机名: ${HOSTNAME}"
   echo "macOS: $(sw_vers -productVersion 2>/dev/null)"
@@ -276,6 +312,9 @@ step "【摘要】生成快速摘要"
   echo ""
   echo "### /tmp 可执行文件"
   find /tmp /var/tmp -type f -perm +111 2>/dev/null | wc -l | xargs echo "数量:"
+  echo ""
+  echo "### 崩溃报告数量"
+  ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | wc -l | xargs echo "数量:"
 } > "${OUTPUT_DIR}/00_SUMMARY.md" 2>/dev/null
 ok "摘要生成完成"
 
