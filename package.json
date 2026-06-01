@@ -18,6 +18,7 @@
     "productName": "MacSecCollect",
     "mac": {
       "category": "public.app-category.utilities",
+      "icon": "assets/icon.icns",
       "target": [
         { "target": "dir", "arch": ["arm64", "x64"] },
         { "target": "dmg", "arch": ["arm64", "x64"] }
