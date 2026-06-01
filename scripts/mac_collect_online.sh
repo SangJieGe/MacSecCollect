@@ -22,6 +22,69 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
+# ── AI 分析提示词（随压缩包一起打包）──
+cat > "${OUTPUT_DIR}/AI_ANALYSIS_PROMPT.md" << 'PROMPT_EOF'
+# MacSecCollect 安全分析请求
+
+## 你的角色
+你是一名专业的 macOS 安全分析师。你收到了来自 MacSecCollect 工具采集的压缩包。
+该工具分两阶段采集：联网阶段抓取实时网络状态，断网阶段采集本地系统数据。
+请对所有文件进行全面安全分析。
+
+## 需要判断的威胁类型
+1. 木马/恶意软件 — 可疑进程、异常路径运行的程序、不明二进制
+2. 持久化后门 — LaunchAgent/LaunchDaemon/LoginItem 中的可疑条目
+3. 肉鸡/C2控制 — 异常出站连接、反向shell、隐藏代理、穿透工具
+4. 权限篡改 — sudoers异常、SSH authorized_keys有陌生公钥
+5. 远程控制 — 未经授权开启的SSH/VNC/ARD/屏幕共享
+6. 信息窃取 — 可疑浏览器扩展、异常的数据访问行为
+7. 系统篡改 — SIP被关闭、hosts文件被改、shell配置被植入后门
+
+## 文件说明
+| 文件 | 内容 | 重点关注 |
+|------|------|---------|
+| 00_SUMMARY.md | 快速摘要 | 先看这个，有关键指标 |
+| 01_connections.txt | 活跃网络连接+进程名 | ESTABLISHED出站连接 |
+| 02_listening.txt | 监听端口 | 非常用端口 |
+| 03_dns.txt | DNS配置 | 是否被篡改 |
+| 04_proxy.txt | 系统代理设置 | 有无异常代理 |
+| 05_tunnels.txt | 穿透工具检查 | ngrok/frp/zerotier |
+| 06_system.txt | 系统版本+SIP+内核扩展 | SIP状态、非Apple内核扩展 |
+| 07_processes.txt | 进程列表 | 非系统路径的进程、/tmp运行的进程 |
+| 08_persistence.txt | 所有自启动项 | ⚠️最重要！非Apple的LaunchAgent/Daemon |
+| 09_auth.txt | 用户/SSH/sudo | authorized_keys有无陌生公钥 |
+| 10_remote.txt | 远程访问服务状态 | SSH/VNC/ARD是否开启 |
+| 11_logs.txt | 系统日志 | 异常认证、sudo滥用 |
+| 12_files.txt | 可疑路径+Shell配置 | .zshrc等有无后门命令 |
+| 13_security.txt | Gatekeeper+XProtect+IOC | 安全机制是否被绕过 |
+| 14_crashes.txt | 崩溃报告 | 异常崩溃模式 |
+
+## 分析重点提示
+- **08_persistence.txt 最重要**，90%的持久化后门在这里
+- **01_connections.txt** 看有无连接到非知名IP的进程
+- **09_auth.txt** 里如果 authorized_keys 有内容必须重点分析
+- **12_files.txt** 里检查 .zshrc/.bash_profile 有无 curl|wget|exec 等命令
+- 进程路径在 /tmp/、/var/tmp/、隐藏目录（.开头）的高度可疑
+
+## 输出格式（请用中文）
+
+### 🔴 高危发现（需立即处理）
+如有，列出最严重的威胁，说明位于哪个文件哪一行。
+
+### 🟡 可疑项目（需关注）
+值得怀疑但需进一步验证的内容。
+
+### 🟢 总体安全状态
+一句话总结：设备整体是否安全。
+
+### 📋 逐文件分析
+按文件逐一说明发现了什么。
+
+### 🔧 建议操作
+具体的验证或修复步骤，按优先级排列。
+PROMPT_EOF
+ok "AI 分析提示词已生成"
+
 # ── 进度 ──
 STEP=0; TOTAL=5
 step() { STEP=$((STEP+1)); echo -e "\n${CYAN}[${STEP}/${TOTAL}]${RESET} ${BOLD}$1${RESET}"; }
