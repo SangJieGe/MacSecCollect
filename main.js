@@ -182,10 +182,12 @@ ipcMain.handle('create-archive', async (event) => {
   if (!sharedOutputDir) {
     return { success: false, error: '没有可打包的数据' };
   }
-  // 通知渲染进程：开始打包
+  // 通知渲染进程：开始打包（延迟确保渲染进程先收到消息再执行zip）
   mainWindow.webContents.send('scan-progress', '📦 正在打包压缩，请稍候...');
+  await new Promise(r => setTimeout(r, 150));
   const result = await createArchive(sharedOutputDir);
   if (result.success) {
+    mainWindow.webContents.send('scan-progress', '✅ 打包完成！');
     sharedOutputDir = ''; // 清理
   }
   return result;
