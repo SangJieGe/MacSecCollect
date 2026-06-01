@@ -121,7 +121,7 @@ function runScript(scriptName, extraArgs = []) {
 }
 
 // ─── 打包压缩 ───
-function createArchive(outputDir) {
+function createArchive(outputDir, progressCallback) {
   return new Promise((resolve) => {
     if (!outputDir || !fs.existsSync(outputDir)) {
       resolve({ success: false, error: '输出目录不存在' });
@@ -131,6 +131,9 @@ function createArchive(outputDir) {
     const archiveName = path.basename(outputDir) + '.zip';
     const desktopPath = path.join(process.env.HOME || '/root', 'Desktop');
     const archivePath = path.join(desktopPath, archiveName);
+
+    // ★ 在 zip 执行前立即发送打包提示
+    if (progressCallback) progressCallback('📦 正在打包压缩，请稍候...');
 
     const child = spawn('zip', ['-r', archivePath, path.basename(outputDir)], {
       cwd: desktopPath,
@@ -190,10 +193,9 @@ ipcMain.handle('create-archive', async (event) => {
   if (!sharedOutputDir) {
     return { success: false, error: '没有可打包的数据' };
   }
-  // 通知渲染进程：开始打包（延迟确保渲染进程先收到消息再执行zip）
-  mainWindow.webContents.send('scan-progress', '📦 正在打包压缩，请稍候...');
-  await new Promise(r => setTimeout(r, 150));
-  const result = await createArchive(sharedOutputDir);
+  const result = await createArchive(sharedOutputDir, (msg) => {
+    mainWindow.webContents.send('scan-progress', msg);
+  });
   if (result.success) {
     mainWindow.webContents.send('scan-progress', '✅ 打包完成！');
     sharedOutputDir = ''; // 清理
