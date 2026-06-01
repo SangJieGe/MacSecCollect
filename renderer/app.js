@@ -152,10 +152,13 @@ offlineBtn.addEventListener('click', async () => {
 
       if (archiveResult.success) {
         addLogLine('✅ 打包完成！', 'success');
+        offlineBtn.querySelector('.btn-text').textContent = '✅ 已完成';
+        offlineBtn.classList.add('done');
         showResultPanel(archiveResult.archivePath, archiveResult.fileSize);
       } else {
         addLogLine(`⚠️ 打包失败: ${archiveResult.error}，数据已保存在临时目录`, 'info');
-        offlineBtn.querySelector('.btn-text').textContent = '已完成 ✓';
+        offlineBtn.querySelector('.btn-text').textContent = '✅ 已完成';
+        offlineBtn.classList.add('done');
         shieldIcon.classList.remove('scanning');
         shieldIcon.classList.add('done');
       }

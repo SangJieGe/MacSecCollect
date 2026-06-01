@@ -65,7 +65,7 @@ step "【进程】运行中的进程 + 开放文件句柄"
   echo -e "\n=== 进程可执行文件路径 ==="
   ps axo pid,comm,args 2>/dev/null | grep -v "^PID" | head -50
   echo -e "\n=== 开放文件句柄（非系统文件，timeout 60s）==="
-  timeout 60 lsof 2>/dev/null | grep -v -E "com\.apple|/System/|/usr/lib" | head -500
+  timeout 60 lsof 2>/dev/null | grep -v -E "com\.apple|/System/|/usr/lib" | head -1000
 } > "${OUTPUT_DIR}/07_processes.txt" 2>/dev/null
 ok "进程列表 + 文件句柄"
 
@@ -138,8 +138,8 @@ step "【用户认证】账号 + SSH + sudo + 登录历史"
   echo -e "\n=== /var/log/auth.log（最后500行）==="
   sudo tail -500 /var/log/auth.log 2>/dev/null || echo "(不存在或权限不足)"
 
-  echo -e "\n=== sudo 使用记录（最近72h）==="
-  timeout 20 log show --last 72h \
+  echo -e "\n=== sudo 使用记录（最近1h unified log）==="
+  timeout 20 log show --last 1h \
     --predicate 'eventMessage contains "sudo"' \
     2>/dev/null | tail -100 || echo "(log 命令超时)"
 } > "${OUTPUT_DIR}/09_auth.txt" 2>/dev/null
@@ -163,27 +163,28 @@ step "【远程访问】SSH/VNC/ARD/屏幕共享"
 ok "远程访问服务"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-step "【日志】最近72小时关键事件"
+step "【日志】系统日志 + 认证日志 + 安装记录"
 {
-  echo "=== 认证事件（最近72h）==="
-  timeout 45 log show --last 72h \
-    --predicate 'eventMessage contains "authentication" or eventMessage contains "sudo" or eventMessage contains "ssh"' \
-    2>/dev/null | tail -200 || echo "(log 命令超时)"
+  echo "=== 系统日志（/var/log/system.log 最后1000行）==="
+  sudo cat /var/log/system.log 2>/dev/null | tail -1000 || echo "(不存在或权限不足)"
 
-  echo -e "\n=== 安全框架事件（Gatekeeper/XProtect，最近72h）==="
-  timeout 30 log show --last 72h \
-    --predicate 'subsystem contains "gatekeeper" or subsystem contains "xprotect"' \
+  echo -e "\n=== 认证日志（/var/log/auth.log 最后500行）==="
+  sudo cat /var/log/auth.log 2>/dev/null | tail -500 || echo "(不存在或权限不足)"
+
+  echo -e "\n=== 安装记录（/var/log/install.log 最后300行）==="
+  sudo cat /var/log/install.log 2>/dev/null | tail -300 || echo "(不存在)"
+
+  echo -e "\n=== 应用日志目录列表 =="
+  ls -lt ~/Library/Logs/ 2>/dev/null | head -30 || echo "(目录不存在)"
+  echo ""
+  ls -lt /Library/Logs/ 2>/dev/null | head -30 || echo "(目录不存在)"
+
+  echo -e "\n=== unified log 最近1h（sudo/ssh 事件）==="
+  timeout 20 log show --last 1h \
+    --predicate 'eventMessage contains "sudo" or eventMessage contains "ssh"' \
     2>/dev/null | tail -100 || echo "(log 命令超时)"
-
-  echo -e "\n=== launchd 启动事件（最近72h）==="
-  timeout 45 log show --last 72h \
-    --predicate 'subsystem == "com.apple.launchd"' \
-    2>/dev/null | tail -300 || echo "(log 命令超时)"
-
-  echo -e "\n=== 最近安装记录 ==="
-  tail -50 /var/log/install.log 2>/dev/null || echo "(不存在)"
 } > "${OUTPUT_DIR}/11_logs.txt" 2>/dev/null
-ok "系统日志（72h）"
+ok "系统日志（读文件方式）"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 step "【文件】可疑路径 + Shell配置 + 临时目录"
