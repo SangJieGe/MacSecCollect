@@ -44,10 +44,14 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+// ─── 脚本目录（打包后脚本在 app.asar.unpacked 里）──
+const SCRIPTS_DIR = __dirname.includes('app.asar')
+  ? path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'scripts')
+  : path.join(__dirname, 'scripts');
+
 // ─── 通用脚本执行器 ───
 function runScript(scriptName, extraArgs = []) {
-  const scriptPath = path.resolve(__dirname, 'scripts', scriptName);
-  const scriptsDir = path.resolve(__dirname, 'scripts');
+  const scriptPath = path.join(SCRIPTS_DIR, scriptName);
 
   if (!fs.existsSync(scriptPath)) {
     return Promise.resolve({ success: false, error: '脚本文件不存在: ' + scriptPath });
@@ -59,7 +63,7 @@ function runScript(scriptName, extraArgs = []) {
   return new Promise((resolve) => {
     const args = [scriptPath, ...extraArgs];
     const child = spawn('bash', args, {
-      cwd: scriptsDir,
+      cwd: SCRIPTS_DIR,
       env: { ...process.env, FORCE_COLOR: '0', TERM: 'dumb' }
     });
 
