@@ -46,16 +46,20 @@ function formatBytes(bytes) {
 
 // ─── 通用脚本执行器 ───
 function runScript(scriptName, extraArgs = []) {
-  const scriptPath = path.join(__dirname, 'scripts', scriptName);
+  const scriptPath = path.resolve(__dirname, 'scripts', scriptName);
+  const scriptsDir = path.resolve(__dirname, 'scripts');
 
   if (!fs.existsSync(scriptPath)) {
     return Promise.resolve({ success: false, error: '脚本文件不存在: ' + scriptPath });
   }
 
+  // 确保脚本有执行权限
+  try { fs.chmodSync(scriptPath, 0o755); } catch (e) {}
+
   return new Promise((resolve) => {
     const args = [scriptPath, ...extraArgs];
     const child = spawn('bash', args, {
-      cwd: path.join(__dirname, 'scripts'),
+      cwd: scriptsDir,
       env: { ...process.env, FORCE_COLOR: '0', TERM: 'dumb' }
     });
 
@@ -107,7 +111,7 @@ function runScript(scriptName, extraArgs = []) {
     });
 
     child.on('error', (err) => {
-      resolve({ success: false, error: err.message });
+      resolve({ success: false, error: `脚本执行失败 ${scriptName}: ${err.message}` });
     });
   });
 }
