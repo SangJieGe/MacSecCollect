@@ -44,6 +44,8 @@
       "scripts/**/*"
     ],
     "dmg": {
+      "icon": "assets/icon.icns",
+      "iconSize": 80,
       "title": "MacSecCollect 安装",
       "window": {
         "width": 540,
