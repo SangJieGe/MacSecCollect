@@ -91,9 +91,14 @@ msc_end() {
     fi
   fi
   local critical; critical=$(msc_is_critical "$id")
-  summary=$(printf '%s' "$summary" | tr '\t\n' '  ' | cut -c1-300)
+  # 清洗字段：制表符与换行必须替换，否则 TSV 会字段错位。
+  # 用 tr 的显式字符类写法（POSIX），避免 '\t\n' 在不同 shell 下的转义歧义。
+  summary=$(printf '%s' "$summary" | tr -d '\r' | sed 's/\t/  /g' | tr '\012' ' ' | cut -c1-300)
+  # id 不允许含分隔符
+  id=$(printf '%s' "$id" | tr -d '\011\012\r')
 
-  # 删除本模块最后一个「未完成」占位行（纯 bash，避免 awk 单行无换行/字段问题）
+  # 删除本模块的旧记录（未完成的 begin 占位行 + 任何已完成行）。
+  # 同一 id 重复 end 时不应产生两条记录，否则整体状态统计会被污染。
   if [ -s "$MSC_MODULES_FILE" ]; then
     local tmp="${MSC_MODULES_FILE}.tmp"
     : > "$tmp"
@@ -102,10 +107,8 @@ msc_end() {
       _i=$((_i + 1))
       case "$_line" in
         "$id"$'\t'*)
-          # 第 4 字段为空 → 是未完成的 begin 占位行
-          local _f4
-          _f4=$(printf '%s' "$_line" | awk -F'\t' '{print $4}')
-          [ -z "$_f4" ] && _lastidx=$_i
+          # 同 id 的所有旧记录都要移除（占位行或重复 end 的残留）
+          _lastidx=$_i
           ;;
       esac
       printf '%s\n' "$_line" >> "$tmp"

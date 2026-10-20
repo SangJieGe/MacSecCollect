@@ -10,7 +10,9 @@
 #  仍然：不使用 sudo、不依赖 GNU timeout/jq、不用 set -e。
 # =============================================================================
 
-MSC_VERSION="1.0.0"
+# 版本号唯一来源：仓库根 VERSION 文件（见 scripts/lib/version.sh）
+# shellcheck source=lib/version.sh
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/lib/version.sh"
 MSC_PHASE="offline"
 MSC_TOTAL_STEPS=14
 
@@ -89,7 +91,17 @@ msc_module_run() {
   if [ $rc -ne 0 ]; then
     printf '\n# [MSC] 状态=%s 退出码=%s 字节=%s\n' "$status" "$rc" "${sz:-0}" >> "$outfile"
   fi
-  msc_end "$id" "$status" "$rc" "bytes=${sz:-0} critical=$critical"
+  # 摘要给人看：只在非 success 时说明原因，不塞调试字段
+  local _sum=""
+  case "$status" in
+    success)  _sum="" ;;
+    partial)  _sum="输出为空或部分内容受限（${sz:-0} 字节）" ;;
+    timed_out) _sum="命令超过 ${secs}s 未完成被终止（退出码 124）" ;;
+    permission_denied) _sum="权限不足，该区域未采集（退出码 ${rc}）" ;;
+    unsupported) _sum="命令不存在或不可执行（退出码 ${rc}）" ;;
+    *)        _sum="命令失败（退出码 ${rc}，输出 ${sz:-0} 字节）" ;;
+  esac
+  msc_end "$id" "$status" "$rc" "$_sum"
   [ "$status" = "success" ] && return 0
   return 1
 }
@@ -499,6 +511,17 @@ fi
 
 # 合并 online 阶段的模块记录（若存在）后再写 manifest
 MSC_END_ISO=$(msc_now_iso)
+# ── 整体状态与各状态计数（必须在写 manifest 之前算好）──
+OVERALL=$(msc_overall_status)
+_cnt() { awk -F'\t' -v s="$1" '$5==s' "$MSC_MODULES_FILE" 2>/dev/null | wc -l | tr -d ' '; }
+CNT_SUCCESS=$(_cnt success)
+CNT_PARTIAL=$(_cnt partial)
+CNT_FAILED=$(_cnt failed)
+CNT_TIMED_OUT=$(_cnt timed_out)
+CNT_PERM=$(_cnt permission_denied)
+CNT_NOTCOL=$(_cnt not_collected)
+CNT_UNSUP=$(_cnt unsupported)
+
 MANIFEST="$OUT_DIR/manifest.json"
 {
   echo "{"
@@ -513,6 +536,8 @@ MANIFEST="$OUT_DIR/manifest.json"
   echo "  \"finished_at\": \"$MSC_END_ISO\","
   echo "  \"full_disk_access\": \"$HAS_FDA\","
   echo "  \"caveat\": \"checksums 只能发现传输损坏或后续改动，不能证明采集主机未被攻陷\","
+  echo "  \"overall_status\": \"$OVERALL\","
+  echo "  \"status_counts\": {\"success\": $CNT_SUCCESS, \"partial\": $CNT_PARTIAL, \"failed\": $CNT_FAILED, \"timed_out\": $CNT_TIMED_OUT, \"permission_denied\": $CNT_PERM, \"not_collected\": $CNT_NOTCOL, \"unsupported\": $CNT_UNSUP},"
   echo "  \"modules\": ["
   awk -F'\t' '
     { rows[NR]=$0 }

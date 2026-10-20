@@ -12,7 +12,9 @@
 #  进度协议（渲染层依赖）：输出 [N/TOTAL] 【描述】
 # =============================================================================
 
-MSC_VERSION="1.0.0"
+# 版本号唯一来源：仓库根 VERSION 文件（见 scripts/lib/version.sh）
+# shellcheck source=lib/version.sh
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/lib/version.sh"
 MSC_PHASE="online"
 MSC_TOTAL_STEPS=15
 
@@ -117,7 +119,17 @@ msc_module_run() {
     printf '\n# [MSC] 该段采集状态=%s 退出码=%s 输出字节=%s\n' "$status" "$rc" "${sz:-0}" >> "$outfile"
   fi
 
-  msc_end "$id" "$status" "$rc" "bytes=${sz:-0} critical=$critical"
+  # 摘要给人看：只在非 success 时说明原因，不塞调试字段
+  local _sum=""
+  case "$status" in
+    success)  _sum="" ;;
+    partial)  _sum="输出为空或部分内容受限（${sz:-0} 字节）" ;;
+    timed_out) _sum="命令超过 ${secs}s 未完成被终止（退出码 124）" ;;
+    permission_denied) _sum="权限不足，该区域未采集（退出码 ${rc}）" ;;
+    unsupported) _sum="命令不存在或不可执行（退出码 ${rc}）" ;;
+    *)        _sum="命令失败（退出码 ${rc}，输出 ${sz:-0} 字节）" ;;
+  esac
+  msc_end "$id" "$status" "$rc" "$_sum"
   [ "$status" = "success" ] && return 0
   return 1
 }
@@ -401,6 +413,17 @@ echo "✓ IOC 检测"
 step "生成 manifest 与摘要"
 MSC_END_ISO=$(msc_now_iso)
 
+# ── 整体状态与各状态计数（必须在写 manifest 之前算好）──
+OVERALL=$(msc_overall_status)
+_cnt() { awk -F'\t' -v s="$1" '$5==s' "$MSC_MODULES_FILE" 2>/dev/null | wc -l | tr -d ' '; }
+CNT_SUCCESS=$(_cnt success)
+CNT_PARTIAL=$(_cnt partial)
+CNT_FAILED=$(_cnt failed)
+CNT_TIMED_OUT=$(_cnt timed_out)
+CNT_PERM=$(_cnt permission_denied)
+CNT_NOTCOL=$(_cnt not_collected)
+CNT_UNSUP=$(_cnt unsupported)
+
 # manifest.json
 MANIFEST="$OUT_DIR/manifest.json"
 {
@@ -417,6 +440,8 @@ MANIFEST="$OUT_DIR/manifest.json"
   echo "  \"started_at\": \"$(msc_iso_of_first)\","
   echo "  \"finished_at\": \"$MSC_END_ISO\","
   echo "  \"full_disk_access\": \"$HAS_FDA\","
+  echo "  \"overall_status\": \"$OVERALL\","
+  echo "  \"status_counts\": {\"success\": $CNT_SUCCESS, \"partial\": $CNT_PARTIAL, \"failed\": $CNT_FAILED, \"timed_out\": $CNT_TIMED_OUT, \"permission_denied\": $CNT_PERM, \"not_collected\": $CNT_NOTCOL, \"unsupported\": $CNT_UNSUP},"
   echo "  \"modules\": ["
   awk -F'\t' '
     { rows[NR]=$0 }
@@ -433,9 +458,6 @@ MANIFEST="$OUT_DIR/manifest.json"
   echo "}"
 } > "$MANIFEST" 2>/dev/null
 echo "✓ 清单"
-
-# 整体状态计算（关键模块失败 → 不得报成功）
-OVERALL=$(msc_overall_status)
 echo ""
 echo "──────────────────────────────────────────────"
 echo "采集阶段完成。整体状态: $OVERALL"

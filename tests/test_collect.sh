@@ -82,7 +82,12 @@ for f in "$REPO"/scripts/mac_collect_online.sh "$REPO"/scripts/mac_collect_offli
   if [ -z "$hits" ]; then ok "无阻塞式 sudo $(basename "$f")"
   else bad "无阻塞式 sudo $(basename "$f")" "$hits"; fi
 done
-hits=$(grep -nE 'sudo [^-]' "$LIB/permissions.sh" 2>/dev/null | grep -vE '^[[:space:]]*#' | grep -v 'sudo -n' || true)
+# 允许：sudo -n（非交互探测）、command -v sudo（仅检查存在性）、注释
+# 禁止：任何其它形式的 sudo 调用（可能阻塞等密码）
+hits=$(grep -nE '(^|[^a-zA-Z_-])sudo[[:space:]]+[^-[:space:]]|(^|[^a-zA-Z_-])sudo[[:space:]]+-[^n[:space:]]' "$LIB/permissions.sh" 2>/dev/null \
+  | grep -vE '^[0-9]+:[[:space:]]*#' \
+  | grep -vE 'sudo[[:space:]]+-n' \
+  | grep -vE 'command[[:space:]]+-v[[:space:]]+sudo' || true)
 if [ -z "$hits" ]; then ok "permissions.sh 仅用 sudo -n 探测"
 else bad "permissions.sh 仅用 sudo -n 探测" "$hits"; fi
 
@@ -151,7 +156,8 @@ export MSC_MODULES_FILE="$TMPROOT/modules.tsv"
 out=$(bash -c "
   . '$LIB/modules.sh'
   MSC_PHASE=test
-  msc_begin m1; msc_end m1 success 0 '正常'
+  # 模拟真实采集比例：10 个模块中 8 成功、1 超时、1 权限不足
+  for n in 1 2 3 4 5 6 7 8; do msc_begin mod\$n; msc_end mod\$n success 0 ok; done
   msc_begin m2; msc_end m2 timed_out 124 '超时'
   msc_begin m3; msc_end m3 permission_denied 1 '无权限'
   msc_begin m4; msc_end m4 success 0 '含tab	和
@@ -159,7 +165,7 @@ out=$(bash -c "
   echo overall=\$(msc_overall_status)
 " 2>&1)
 
-assert_eq "C1 记录 4 条模块" "4" "$(wc -l < "$MSC_MODULES_FILE" | tr -d ' ')"
+assert_eq "C1 记录 11 条模块" "11" "$(wc -l < "$MSC_MODULES_FILE" | tr -d ' ')"
 assert_contains "C2 timed_out 状态保留" "timed_out" "$(grep m2 "$MSC_MODULES_FILE")"
 assert_contains "C3 退出码保留" "124" "$(grep m2 "$MSC_MODULES_FILE")"
 assert_contains "C4 summary 中的 tab/换行被清洗" "含tab  和 换行" "$(grep m4 "$MSC_MODULES_FILE")"
@@ -340,52 +346,83 @@ fi
 echo ""
 echo "── F. 脱敏 ──"
 # ─────────────────────────────────────────────────────────
+# F. 脱敏：用 node 直接跑 lib/privacy.js
+# ─────────────────────────────────────────────────────────
 if command -v node >/dev/null 2>&1; then
-  san_out=$(node -e "
-    const {redact} = require('$REPO/lib/privacy.js');
-    const samples = [
-      'https://user:pass123@proxy.corp.local:8080',
-      'GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789',
-      'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
-      'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def',
-      'SLACK=xoxb-123456789-abcdefghij',
-      'normal harmless log line with no secrets',
-      'glpat-abcdefghijklmnopqrst'
-    ];
-    for (const s of samples) console.log(redact(s));
-  " 2>&1)
-  assert_contains "F1 代理 URL 凭据脱敏" "[REDACTED:" "$(echo "$san_out" | head -1)"
+  TMPF=$(mktemp)
+  cat > "$TMPF" <<'NODEEOF'
+const {redactText} = require(process.argv[2] + "/lib/privacy.js");
+const samples = [
+  "https://user:pass123@proxy.corp.local:8080",
+  "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+  "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+  "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+  "SLACK=xoxb-1234567890-abcdefghij",
+  "normal harmless log line with no secrets",
+  "glpat-abcdefghijklmnopqrst"
+];
+for (const s of samples) console.log(redactText(s).text);
+NODEEOF
+  san_out=$(node "$TMPF" "$REPO" 2>&1)
+  rm -f "$TMPF"
+  assert_contains "F1 代理 URL 凭据脱敏" "[REDACTED:" "$(printf '%s\n' "$san_out" | head -1)"
   assert_contains "F2 无害行不被破坏" "normal harmless log line with no secrets" "$san_out"
   case "$san_out" in
-    *"pass123"*) bad "F3 密码未残留" "仍可见 pass123" ;;
+    *pass123*) bad "F3 密码未残留" "仍可见 pass123" ;;
     *) ok "F3 密码未残留" ;;
   esac
   case "$san_out" in
-    *"ghp_abcdefghijklmnopqrstuvwxyz0123456789"*) bad "F4 token 未残留" "仍可见完整 token" ;;
+    *ghp_abcdefghijklmnopqrstuvwxyz*) bad "F4 token 未残留" "仍可见完整 token" ;;
     *) ok "F4 token 未残留" ;;
   esac
+  case "$san_out" in
+    *AKIAIOSFODNN7EXAMPLE*) bad "F5 AWS AKID 未残留" "仍可见完整 AKID" ;;
+    *) ok "F5 AWS AKID 未残留" ;;
+  esac
 else
-  skip "F1-F4 脱敏" "node 不可用"
+  skip "F1-F5 脱敏" "node 不可用"
 fi
 
 # ─────────────────────────────────────────────────────────
 echo ""
-echo "── G. 脚本与渲染层版本号一致性 ──"
+echo "── G. 版本号单一来源 ──"
 # ─────────────────────────────────────────────────────────
-pkg_ver=$(node -e "console.log(require('$REPO/package.json').version)" 2>/dev/null)
-on_ver=$(grep -m1 '^MSC_VERSION=' "$REPO/scripts/mac_collect_online.sh" 2>/dev/null | cut -d'"' -f2)
-off_ver=$(grep -m1 '^MSC_VERSION=' "$REPO/scripts/mac_collect_offline.sh" 2>/dev/null | cut -d'"' -f2)
-assert_eq "G1 online 脚本版本 = package.json" "$pkg_ver" "$on_ver"
-assert_eq "G2 offline 脚本版本 = package.json" "$pkg_ver" "$off_ver"
+if [ -f "$REPO/VERSION" ]; then
+  vfile=$(tr -d ' \t\r\n' < "$REPO/VERSION")
+  ok "G0 VERSION 文件存在 ($vfile)"
+  pkg_ver=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$REPO/package.json" 2>/dev/null)
+  assert_eq "G1 VERSION 与 package.json 一致" "$vfile" "$pkg_ver"
 
-# ─────────────────────────────────────────────────────────
+  for f in mac_collect_online.sh mac_collect_offline.sh; do
+    if grep -qE '^MSC_VERSION="[0-9]' "$REPO/scripts/$f" 2>/dev/null; then
+      bad "G2 $f 未硬编码版本" "仍存在 MSC_VERSION=\"x.y.z\""
+    else
+      ok "G2 $f 未硬编码版本"
+    fi
+    rtv=$(bash -c '. "$1/scripts/lib/version.sh"; printf "%s" "$MSC_VERSION"' _ "$REPO" 2>/dev/null)
+    assert_eq "G2 $f 运行时版本 = VERSION" "$vfile" "$rtv"
+  done
+
+  unk=$(MSC_VERSION_FILE=/nonexistent/VERSION bash -c '. "$1/scripts/lib/version.sh"; printf "%s" "$MSC_VERSION"' _ "$REPO" 2>/dev/null)
+  case "$unk" in
+    *unknown*) ok "G3 VERSION 缺失时标注 unknown" ;;
+    *) bad "G3 VERSION 缺失时标注 unknown" "得到 [$unk]" ;;
+  esac
+  # 报告里的 tool_version 必须来自版本库
+  rtv=$(bash -c '. "$1/scripts/lib/version.sh"; printf "%s" "$MSC_VERSION"' _ "$REPO" 2>/dev/null)
+  assert_eq "G4 报告 tool_version 来源一致" "$vfile" "$rtv"
+else
+  bad "G0 VERSION 文件存在" "缺少 $REPO/VERSION"
+fi
+
 echo ""
 echo "══════════════════════════════════════════════════════"
 printf ' 结果: \033[32m%d 通过\033[0m  \033[31m%d 失败\033[0m  \033[33m%d 跳过\033[0m\n' "$PASS" "$FAIL" "$SKIP"
 if [ "$FAIL" -gt 0 ]; then
-  printf ' 失败项:%b\n' "$FAILED_NAMES"
-  echo "══════════════════════════════════════════════════════"
-  exit 1
+  printf ' 失败项:\033[31m%b\033[0m\n' "$FAILED_NAMES"
 fi
 echo "══════════════════════════════════════════════════════"
+# 清理测试临时目录
+[ -n "${TMPROOT:-}" ] && rm -rf "$TMPROOT" 2>/dev/null
+[ "$FAIL" -gt 0 ] && exit 1
 exit 0
